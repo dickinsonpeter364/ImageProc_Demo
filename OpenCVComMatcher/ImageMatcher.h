@@ -165,7 +165,7 @@ public:
         LONG* channels
         );
     std::string ApplySubstitutions(const std::string& input);
-    cv::Mat ClipSourceToLargestObject(cv::Mat& src);
+    cv::Mat ClipSourceToLargestObject(cv::Mat& src, int trough = 65);
     void Log(const char* fmt, ...);
     // Helper to remove whitespace from string
     std::string RemoveWhitespace(const std::string& input);

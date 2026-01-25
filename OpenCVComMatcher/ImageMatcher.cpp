@@ -58,11 +58,11 @@ int CImageMatcher::GetHistogramTrough(const cv::UMat& graySrc)
             }
         }
     }
-
+     
     // 2. Find First Trough after First Peak
     int trough = -1;
-    // Look for local minimum
-    for (int i = firstPeak + 17; i < histSize - 1; i++) {
+    // Look for local minimum2`1
+    for (int i = firstPeak + 1; i < histSize - 1; i++) {
         if (h[i] < h[i - 1] && h[i] < h[i + 1] -2) {
             trough = i;
             break;
@@ -152,7 +152,7 @@ void CImageMatcher::Log(const char* fmt, ...)
     }
 }
 
-cv::Mat CImageMatcher::ClipSourceToLargestObject(cv::Mat& src)
+cv::Mat CImageMatcher::ClipSourceToLargestObject(cv::Mat& src, int trough)
 {
     if (src.empty()) return src;
 
@@ -167,7 +167,7 @@ cv::Mat CImageMatcher::ClipSourceToLargestObject(cv::Mat& src)
 
     // Threshold to mask out black background (pixel values < 65 considered background)
     cv::Mat mask;
-    cv::threshold(gray, mask, 65, 255, cv::THRESH_BINARY);
+    cv::threshold(gray, mask, trough, 255, cv::THRESH_BINARY);
 
     std::vector<std::vector<cv::Point>> contours;
     cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
@@ -515,13 +515,15 @@ STDMETHODIMP CImageMatcher::SetSourceImage(
 
         // 1. Clip the ORIGINAL Image
         cv::Rect imgBounds(0, 0, tempMat.cols, tempMat.rows);
-
-        cv::Mat clippedMat = ClipSourceToLargestObject(tempMat);
-        /*
+		cv::UMat uTempMat;
+		tempMat.copyTo(uTempMat);
+		auto trough = GetHistogramTrough(uTempMat);
+        cv::Mat clippedMat = ClipSourceToLargestObject(tempMat, trough);
+        
         std::stringstream tt;
         tt << "C:\\tmp\\clipped_" << _imageNumber << ".bmp";
 		cv::imwrite(tt.str(), clippedMat);
-        */
+        
         cv::UMat uClipped, uRotated;
         clippedMat.copyTo(uClipped);
         int angle = 90;
@@ -544,40 +546,34 @@ STDMETHODIMP CImageMatcher::SetSourceImage(
         else {
             return E_INVALIDARG;
         }
-        /*
+        
         std::stringstream uu;
         uu << "C:\\tmp\\rotated_" << _imageNumber << ".bmp";
         cv::imwrite(uu.str(), uRotated);
-        */
+        
         // Debug: Threshold logic (on GPU)
         cv::UMat uGray, uBaseline;        // GaussianBlur to remove noise if needed, or simply for smoothing before threshold
         //cv::GaussianBlur(rotatedMat, baseline, cv::Size(5, 5), 0, 0, cv::BORDER_DEFAULT);
         cv::bilateralFilter(uRotated, uBaseline, 7, 23, 23);
-        // Note: Thresholding the main source image might lose color info if rotatedMat is BGR.
-        // If the intent is to store a Binary image, this is fine. If BGR is needed for matching, verify this step.
-        // Assuming user wants the binary/processed result stored:
-        // Convert to gray if multi-channel to allow threshold
-        if (uBaseline.channels() >= 3) {
-            cv::cvtColor(uBaseline, uGray, cv::COLOR_BGR2GRAY);
-            int thresh = GetHistogramTrough(uGray);
-            cv::threshold(uGray, uRotated, thresh, 255, cv::THRESH_BINARY);
-        }
-        else {
-            int thresh = GetHistogramTrough(uGray);
-            
-            cv::threshold(uGray, uRotated, thresh, 255, cv::THRESH_BINARY);
-        }
-        
+        if (uRotated.channels() >= 3) 
+            cv::cvtColor(uRotated, uGray, cv::COLOR_BGR2GRAY);
+        else
+            uGray = uRotated;
+
+        int thresh = GetHistogramTrough(uGray);
+
+        cv::threshold(uGray, uRotated, thresh, 255, cv::THRESH_BINARY);
+
         // Upload to UMat
         std::stringstream ss;
         cv::Mat resultMat = uRotated.getMat(cv::ACCESS_READ);
 
         // Write debug file
-        /*
+        
         ss << "C:\\tmp\\" << _imageNumber << ".bmp";
         _imageNumber++;
         cv::imwrite(ss.str(), resultMat);
-        */
+        
         uRotated.copyTo(m_CurrentSourceImageU);
 
         // Initialize m_MarkedSource as BGR for colored annotations
