@@ -14,9 +14,77 @@
 #include "ZXing/Result.h"
 #include "ZXing/ImageView.h"
 
+// Poppler includes
+#include <poppler/cpp/poppler-document.h>
+#include <poppler/cpp/poppler-image.h>
+#include <poppler/cpp/poppler-page-renderer.h>
+#include <poppler/cpp/poppler-page.h>
+
+
 // =========================================================
 //  Internal Helpers
 // =========================================================
+
+HRESULT ExtractImagesFromPdfInternal(const std::string& pdfFilePath,
+    std::vector<cv::Mat>& images) {
+    images.clear();
+    try {
+        // Use unique_ptr to ensure doc is deleted
+        std::unique_ptr<poppler::document> doc(
+            poppler::document::load_from_file(pdfFilePath));
+        if (!doc) {
+            return E_FAIL;
+        }
+
+        int numPages = doc->pages();
+        images.reserve(numPages);
+
+        poppler::page_renderer renderer;
+        renderer.set_render_hint(poppler::page_renderer::antialiasing, true);
+        renderer.set_render_hint(poppler::page_renderer::text_antialiasing, true);
+
+        for (int i = 0; i < numPages; ++i) {
+            cv::Mat mat;
+            std::unique_ptr<poppler::page> p(doc->create_page(i));
+            if (p) {
+                // Render page at 300 DPI
+                poppler::image img = renderer.render_page(p.get(), 300, 300);
+                if (img.is_valid()) {
+                    // Convert poppler image to cv::Mat
+                    // We wrap the poppler data in a temporary cv::Mat header,
+                    // then perform a single copy (clone or cvtColor) to create the
+                    // persistent Mat.
+                    if (img.format() == poppler::image::format_rgb24) {
+                        cv::Mat wrapped(img.height(), img.width(), CV_8UC3,
+                            (void*)img.const_data(), img.bytes_per_row());
+                        cv::cvtColor(wrapped, mat, cv::COLOR_RGB2BGR);
+                    }
+                    else if (img.format() == poppler::image::format_argb32) {
+                        cv::Mat wrapped(img.height(), img.width(), CV_8UC4,
+                            (void*)img.const_data(), img.bytes_per_row());
+                        cv::cvtColor(wrapped, mat, cv::COLOR_BGRA2BGR);
+                    }
+                    else if (img.format() == poppler::image::format_bgr24) {
+                        cv::Mat wrapped(img.height(), img.width(), CV_8UC3,
+                            (void*)img.const_data(), img.bytes_per_row());
+                        mat = wrapped.clone();
+                    }
+                }
+            }
+            // Push back (even if empty to preserve index if needed, or if failed)
+            images.push_back(std::move(mat));
+        }
+
+        return S_OK;
+    }
+    catch (const std::exception& e) {
+        return E_FAIL;
+    }
+    catch (...) {
+        return E_FAIL;
+    }
+}
+
 int CImageMatcher::GetHistogramTrough(const cv::UMat& graySrc)
 {
     if (graySrc.empty()) return -1;

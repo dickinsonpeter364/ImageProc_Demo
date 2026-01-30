@@ -116,7 +116,7 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <ModuleDefinitionFile>.\OpenCVComMatcher.def</ModuleDefinitionFile>
-      <AdditionalDependencies>comsvcs.lib;%(AdditionalDependencies);opencv_world4d.lib.;tesseract55d.lib;zxing.lib</AdditionalDependencies>
+      <AdditionalDependencies>comsvcs.lib;poppler-cpp.lib;%(AdditionalDependencies);opencv_world4d.lib.;tesseract55d.lib;zxing.lib</AdditionalDependencies>
       <RegisterOutput>false</RegisterOutput>
     </Link>
   </ItemDefinitionGroup>
@@ -221,7 +221,7 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <ModuleDefinitionFile>.\OpenCVComMatcher.def</ModuleDefinitionFile>
-      <AdditionalDependencies>comsvcs.lib;opencv_world4.lib;zxing.lib;tesseract55.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>comsvcs.lib;poppler-cpp.lib;opencv_world4.lib;zxing.lib;tesseract55.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <RegisterOutput>false</RegisterOutput>
