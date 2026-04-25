@@ -164,40 +164,6 @@ public:
         LONG* height,
         LONG* channels
         );
-
-    STDMETHOD(RenderPdfPage)(
-        BSTR    pdfPath,
-        DOUBLE  dpi,
-        LONG    pageIndex,
-        SAFEARRAY** pImgData,
-        LONG*   width,
-        LONG*   height,
-        LONG*   channels,
-        VARIANT_BOOL* success
-        );
-
-    STDMETHOD(ComputeContentRect)(
-        BSTR    pdfPath,
-        DOUBLE* minX,
-        DOUBLE* minY,
-        DOUBLE* maxX,
-        DOUBLE* maxY,
-        VARIANT_BOOL* success
-        );
-
-    STDMETHOD(CreateAbsoluteMap)(
-        SAFEARRAY* imgData,
-        LONG    width,
-        LONG    height,
-        LONG    channels,
-        BSTR    l1PdfPath,
-        BSTR    l2PdfPath,
-        DOUBLE  dpi,
-        VARIANT_BOOL useL2,
-        BSTR    options,
-        BSTR*   jsonResult,
-        VARIANT_BOOL* success
-        );
     std::string ApplySubstitutions(const std::string& input);
     cv::Mat ClipSourceToLargestObject(cv::Mat& src, int trough = 65);
     void Log(const char* fmt, ...);
