@@ -115,7 +115,48 @@ interface IImageMatcher : IDispatch
         [out] LONG* width,
         [out] LONG* height,
         [out] LONG* channels
-    
+    );
+
+    // 11. Render a single page of a PDF to a raw BGR byte array.
+    [id(11)] HRESULT RenderPdfPage(
+        [in]  BSTR   pdfPath,
+        [in]  DOUBLE dpi,
+        [in]  LONG   pageIndex,
+        [out] SAFEARRAY(unsigned char)* pImgData,
+        [out] LONG*  width,
+        [out] LONG*  height,
+        [out] LONG*  channels,
+        [out, retval] VARIANT_BOOL* success
+    );
+
+    // 12. Compute the bounding box of visible content on page 0 in PDF points
+    //     (coordinate origin top-left, y increases downward).
+    [id(12)] HRESULT ComputeContentRect(
+        [in]  BSTR    pdfPath,
+        [out] DOUBLE* minX,
+        [out] DOUBLE* minY,
+        [out] DOUBLE* maxX,
+        [out] DOUBLE* maxY,
+        [out, retval] VARIANT_BOOL* success
+    );
+
+    // 13. Extract text elements from a PDF and return their pixel positions as JSON.
+    //     imgData / width / height / channels: the already-rendered source image.
+    //     JSON schema: { success, errorMessage, imageWidth, imageHeight,
+    //                    cwRotations, elements:[{type,text,x,y,width,height,
+    //                    fontName,fontSize,isBold,isItalic}] }
+    [id(13)] HRESULT CreateAbsoluteMap(
+        [in]  SAFEARRAY(unsigned char) imgData,
+        [in]  LONG    width,
+        [in]  LONG    height,
+        [in]  LONG    channels,
+        [in]  BSTR    l1PdfPath,
+        [in]  BSTR    l2PdfPath,
+        [in]  DOUBLE  dpi,
+        [in]  VARIANT_BOOL useL2,
+        [in]  BSTR    options,
+        [out] BSTR*   jsonResult,
+        [out, retval] VARIANT_BOOL* success
     );
 };
 [

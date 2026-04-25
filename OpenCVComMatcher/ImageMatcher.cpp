@@ -1369,3 +1369,212 @@ STDMETHODIMP CImageMatcher::GetMarkedImage(
         return E_FAIL;
     }
 }
+
+// =========================================================
+//  Helper: poppler image -> BGR cv::Mat
+// =========================================================
+static cv::Mat PopplerImageToMat(const poppler::image& img)
+{
+    cv::Mat mat;
+    if (img.format() == poppler::image::format_rgb24) {
+        cv::Mat tmp(img.height(), img.width(), CV_8UC3,
+            (void*)img.const_data(), img.bytes_per_row());
+        cv::cvtColor(tmp, mat, cv::COLOR_RGB2BGR);
+    }
+    else if (img.format() == poppler::image::format_argb32) {
+        cv::Mat tmp(img.height(), img.width(), CV_8UC4,
+            (void*)img.const_data(), img.bytes_per_row());
+        cv::cvtColor(tmp, mat, cv::COLOR_BGRA2BGR);
+    }
+    else if (img.format() == poppler::image::format_bgr24) {
+        cv::Mat tmp(img.height(), img.width(), CV_8UC3,
+            (void*)img.const_data(), img.bytes_per_row());
+        mat = tmp.clone();
+    }
+    return mat;
+}
+
+// =========================================================
+//  11. RenderPdfPage
+// =========================================================
+STDMETHODIMP CImageMatcher::RenderPdfPage(
+    BSTR pdfPath, DOUBLE dpi, LONG pageIndex,
+    SAFEARRAY** pImgData, LONG* width, LONG* height, LONG* channels,
+    VARIANT_BOOL* success)
+{
+    if (!pImgData || !width || !height || !channels || !success) return E_POINTER;
+    *pImgData = nullptr; *width = *height = *channels = 0;
+    *success = VARIANT_FALSE;
+
+    try {
+        std::string path((char*)CW2A(pdfPath, CP_UTF8));
+
+        std::unique_ptr<poppler::document> doc(poppler::document::load_from_file(path));
+        if (!doc || pageIndex < 0 || pageIndex >= doc->pages()) return S_OK;
+
+        std::unique_ptr<poppler::page> page(doc->create_page(pageIndex));
+        if (!page) return S_OK;
+
+        poppler::page_renderer renderer;
+        renderer.set_render_hint(poppler::page_renderer::antialiasing, true);
+        renderer.set_render_hint(poppler::page_renderer::text_antialiasing, true);
+
+        poppler::image img = renderer.render_page(page.get(), dpi, dpi);
+        if (!img.is_valid()) return S_OK;
+
+        cv::Mat mat = PopplerImageToMat(img);
+        if (mat.empty()) return S_OK;
+
+        *width    = mat.cols;
+        *height   = mat.rows;
+        *channels = mat.channels();
+
+        HRESULT hr = MatToSafeArray(mat, pImgData);
+        if (SUCCEEDED(hr)) *success = VARIANT_TRUE;
+        return hr;
+    }
+    catch (...) { return E_FAIL; }
+}
+
+// =========================================================
+//  12. ComputeContentRect
+//  Renders page 0 at 72 DPI (1 px = 1 pt) and returns the
+//  tight bounding box of non-white pixels in PDF points,
+//  origin top-left, y increasing downward.
+// =========================================================
+STDMETHODIMP CImageMatcher::ComputeContentRect(
+    BSTR pdfPath,
+    DOUBLE* minX, DOUBLE* minY, DOUBLE* maxX, DOUBLE* maxY,
+    VARIANT_BOOL* success)
+{
+    if (!minX || !minY || !maxX || !maxY || !success) return E_POINTER;
+    *minX = *minY = *maxX = *maxY = 0.0;
+    *success = VARIANT_FALSE;
+
+    try {
+        std::string path((char*)CW2A(pdfPath, CP_UTF8));
+
+        std::unique_ptr<poppler::document> doc(poppler::document::load_from_file(path));
+        if (!doc || doc->pages() == 0) return S_OK;
+
+        std::unique_ptr<poppler::page> page(doc->create_page(0));
+        if (!page) return S_OK;
+
+        poppler::page_renderer renderer;
+        renderer.set_render_hint(poppler::page_renderer::antialiasing, false);
+
+        // At 72 DPI: 1 pixel == 1 PDF point
+        poppler::image img = renderer.render_page(page.get(), 72.0, 72.0);
+        if (!img.is_valid()) return S_OK;
+
+        cv::Mat mat = PopplerImageToMat(img);
+        if (mat.empty()) return S_OK;
+
+        cv::imwrite("C:\\pdflog\\content_rect_input.png", mat);
+
+        cv::Mat gray, mask;
+        cv::cvtColor(mat, gray, cv::COLOR_BGR2GRAY);
+        cv::threshold(gray, mask, 250, 255, cv::THRESH_BINARY_INV);
+
+        std::vector<cv::Point> pts;
+        cv::findNonZero(mask, pts);
+        if (pts.empty()) return S_OK;
+
+        cv::Rect bounds = cv::boundingRect(pts);
+        *minX = (double)bounds.x;
+        *minY = (double)bounds.y;
+        *maxX = (double)(bounds.x + bounds.width);
+        *maxY = (double)(bounds.y + bounds.height);
+        *success = VARIANT_TRUE;
+        return S_OK;
+    }
+    catch (...) { return E_FAIL; }
+}
+
+// =========================================================
+//  13. CreateAbsoluteMap
+// =========================================================
+STDMETHODIMP CImageMatcher::CreateAbsoluteMap(
+    SAFEARRAY* imgData,
+    LONG width, LONG height, LONG channels,
+    BSTR l1PdfPath, BSTR l2PdfPath,
+    DOUBLE dpi, VARIANT_BOOL useL2, BSTR options,
+    BSTR* jsonResult, VARIANT_BOOL* success)
+{
+    if (!jsonResult || !success) return E_POINTER;
+    *jsonResult = nullptr;
+    *success    = VARIANT_FALSE;
+
+    auto JsonEscape = [](const std::string& s) -> std::string {
+        std::string out;
+        out.reserve(s.size());
+        for (unsigned char c : s) {
+            if      (c == '"')  out += "\\\"";
+            else if (c == '\\') out += "\\\\";
+            else if (c == '\n') out += "\\n";
+            else if (c == '\r') out += "\\r";
+            else if (c == '\t') out += "\\t";
+            else if (c >= 0x20) out += (char)c;
+        }
+        return out;
+    };
+
+    auto MakeFailJson = [&](const char* msg) {
+        std::ostringstream js;
+        js << "{\"success\":false,\"errorMessage\":\"" << msg << "\","
+           << "\"imageWidth\":" << width << ",\"imageHeight\":" << height
+           << ",\"cwRotations\":0,\"elements\":[]}";
+        std::string s = js.str();
+        *jsonResult = SysAllocString(CA2W(s.c_str(), CP_UTF8));
+    };
+
+    try {
+        std::string path((char*)CW2A(l1PdfPath, CP_UTF8));
+
+        std::unique_ptr<poppler::document> doc(poppler::document::load_from_file(path));
+        if (!doc || doc->pages() == 0) { MakeFailJson("Failed to open PDF"); return S_OK; }
+
+        std::unique_ptr<poppler::page> page(doc->create_page(0));
+        if (!page) { MakeFailJson("Failed to open page 0"); return S_OK; }
+
+        double scale = dpi / 72.0;
+        std::vector<poppler::text_box> boxes = page->text_list();
+
+        std::ostringstream js;
+        js << "{\"success\":true,\"errorMessage\":\"\","
+           << "\"imageWidth\":"  << width  << ","
+           << "\"imageHeight\":" << height << ","
+           << "\"cwRotations\":0,\"elements\":[";
+
+        bool first = true;
+        for (const auto& box : boxes) {
+            auto ba = box.text().to_utf8();
+            std::string text(ba.data(), ba.size());
+            if (text.empty()) continue;
+
+            poppler::rectf r = box.bbox();
+            int px = (int)(r.x()     * scale);
+            int py = (int)(r.y()     * scale);
+            int pw = (int)(r.width() * scale);
+            int ph = (int)(r.height()* scale);
+            if (pw <= 0 || ph <= 0) continue;
+
+            if (!first) js << ",";
+            first = false;
+
+            js << "{\"type\":\"TEXT\","
+               << "\"text\":\""  << JsonEscape(text) << "\","
+               << "\"x\":"       << px << ",\"y\":"     << py << ","
+               << "\"width\":"   << pw << ",\"height\":" << ph << ","
+               << "\"fontName\":\"\",\"fontSize\":0.0,"
+               << "\"isBold\":false,\"isItalic\":false}";
+        }
+
+        js << "]}";
+        std::string s = js.str();
+        *jsonResult = SysAllocString(CA2W(s.c_str(), CP_UTF8));
+        *success    = VARIANT_TRUE;
+        return S_OK;
+    }
+    catch (...) { MakeFailJson("Exception in CreateAbsoluteMap"); return S_OK; }
+}
